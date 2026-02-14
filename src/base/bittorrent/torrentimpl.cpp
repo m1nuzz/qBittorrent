@@ -1707,10 +1707,10 @@ void TorrentImpl::setSequentialDownload(const bool enable)
     {
         m_nativeHandle.set_flags(lt::torrent_flags::sequential_download);
         m_nativeStatus.flags |= lt::torrent_flags::sequential_download;  // prevent return cached value
-        
+
         // Включаем автоматическую последовательную загрузку файлов
         m_sequentialFileLimiting = true;
-        
+
         if (hasMetadata())
             applySequentialFilePriorities();
     }
@@ -1718,10 +1718,10 @@ void TorrentImpl::setSequentialDownload(const bool enable)
     {
         m_nativeHandle.unset_flags(lt::torrent_flags::sequential_download);
         m_nativeStatus.flags &= ~lt::torrent_flags::sequential_download;  // prevent return cached value
-        
+
         // Выключаем - восстанавливаем оригинальные приоритеты
         m_sequentialFileLimiting = false;
-        
+
         if (hasMetadata())
         {
             // Восстанавливаем приоритеты, которые пользователь установил
@@ -1830,10 +1830,10 @@ void TorrentImpl::applySequentialFilePriorities()
             nativeFilePrios[LT::toUnderlyingType(nativeIndexes[i])] = LT::toNative(m_filePriorities[i]);
             activeFile = i;
         }
-        // Следующий файл = предзагрузка (качаем с низким приоритетом)
+        // Следующий файл = предзагрузка (качаем с нормальным приоритетом)
         else if (nextFile < 0)
         {
-            nativeFilePrios[LT::toUnderlyingType(nativeIndexes[i])] = LT::toNative(DownloadPriority::Low);
+            nativeFilePrios[LT::toUnderlyingType(nativeIndexes[i])] = LT::toNative(DownloadPriority::Normal);
             nextFile = i;
             break; // Остальные файлы остаются dont_download
         }
@@ -3062,15 +3062,6 @@ void TorrentImpl::prioritizeFiles(const QList<DownloadPriority> &priorities)
             break;
         }
     }
-
-    const int internalFilesCount = m_torrentInfo.nativeInfo()->files().num_files(); // including .pad files
-    auto nativePriorities = std::vector<lt::download_priority_t>(internalFilesCount, LT::toNative(DownloadPriority::Normal));
-    const auto nativeIndexes = m_torrentInfo.nativeIndexes();
-    for (qsizetype i = 0; i < priorities.size(); ++i)
-        nativePriorities[LT::toUnderlyingType(nativeIndexes[i])] = LT::toNative(priorities[i]);
-
-    qDebug() << Q_FUNC_INFO << "Changing files priorities...";
-    m_nativeHandle.prioritize_files(nativePriorities);
 
     m_filePriorities = priorities;
     
