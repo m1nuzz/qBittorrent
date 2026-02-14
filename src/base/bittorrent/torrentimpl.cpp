@@ -1806,7 +1806,7 @@ void TorrentImpl::applySequentialFilePriorities()
     // Инициализируем все файлы как "не качать"
     std::vector<lt::download_priority_t> nativeFilePrios(
         internalFilesCount, 
-        lt::dont_download
+        LT::toNative(DownloadPriority::Ignored)
     );
 
     int activeFile = -1;
