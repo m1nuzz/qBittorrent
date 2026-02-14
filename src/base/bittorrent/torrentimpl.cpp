@@ -1704,7 +1704,7 @@ void TorrentImpl::forceRecheck()
 void TorrentImpl::setSequentialDownload(const bool enable)
 {
     const bool wasEnabled = isSequentialDownload();
-    
+
     if (enable)
     {
         m_nativeHandle.set_flags(lt::torrent_flags::sequential_download);
@@ -1788,7 +1788,7 @@ void TorrentImpl::updatePiecePrioritiesFromFiles()
 
     // Initialize all pieces with Ignored priority
     auto piecePriorities = std::vector<lt::download_priority_t>(
-        m_torrentInfo.piecesCount(), 
+        m_torrentInfo.piecesCount(),
         LT::toNative(DownloadPriority::Ignored)
     );
 
