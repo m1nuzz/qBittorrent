@@ -309,6 +309,7 @@ namespace BitTorrent
         void moveStorage(const Path &newPath, MoveStorageContext context);
         void manageActualFilePaths();
         void applyFirstLastPiecePriority(bool enabled);
+        void applySequentialFilePriorities();
 
         void prepareResumeData(lt::add_torrent_params resumeData);
         void endReceivedMetadataHandling(const Path &savePath, const PathList &fileNames);
@@ -370,6 +371,7 @@ namespace BitTorrent
         bool m_hasFinishedStatus = false;
         bool m_hasMissingFiles = false;
         bool m_hasFirstLastPiecePriority = false;
+        bool m_sequentialFileLimiting = false;
         bool m_useAutoTMM = false;
         bool m_isStopped = false;
         StopCondition m_stopCondition = StopCondition::None;

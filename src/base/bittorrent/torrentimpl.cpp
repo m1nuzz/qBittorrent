@@ -1707,11 +1707,36 @@ void TorrentImpl::setSequentialDownload(const bool enable)
     {
         m_nativeHandle.set_flags(lt::torrent_flags::sequential_download);
         m_nativeStatus.flags |= lt::torrent_flags::sequential_download;  // prevent return cached value
+        
+        // Включаем автоматическую последовательную загрузку файлов
+        m_sequentialFileLimiting = true;
+        
+        if (hasMetadata())
+            applySequentialFilePriorities();
     }
     else
     {
         m_nativeHandle.unset_flags(lt::torrent_flags::sequential_download);
         m_nativeStatus.flags &= ~lt::torrent_flags::sequential_download;  // prevent return cached value
+        
+        // Выключаем - восстанавливаем оригинальные приоритеты
+        m_sequentialFileLimiting = false;
+        
+        if (hasMetadata())
+        {
+            // Восстанавливаем приоритеты, которые пользователь установил
+            const int internalFilesCount = m_torrentInfo.nativeInfo()->files().num_files();
+            auto nativePriorities = std::vector<lt::download_priority_t>(
+                internalFilesCount, 
+                LT::toNative(DownloadPriority::Normal)
+            );
+            
+            const auto nativeIndexes = m_torrentInfo.nativeIndexes();
+            for (int i = 0; i < filesCount(); ++i)
+                nativePriorities[LT::toUnderlyingType(nativeIndexes[i])] = LT::toNative(m_filePriorities[i]);
+
+            m_nativeHandle.prioritize_files(nativePriorities);
+        }
     }
 
     deferredRequestResumeData();
@@ -1767,6 +1792,60 @@ void TorrentImpl::applyFirstLastPiecePriority(const bool enabled)
     }
 
     m_nativeHandle.prioritize_pieces(piecePriorities);
+}
+
+void TorrentImpl::applySequentialFilePriorities()
+{
+    if (!hasMetadata())
+        return;
+
+    const int fileCount = filesCount();
+    const auto nativeIndexes = m_torrentInfo.nativeIndexes();
+    const int internalFilesCount = m_torrentInfo.nativeInfo()->files().num_files();
+    
+    // Инициализируем все файлы как "не качать"
+    std::vector<lt::download_priority_t> nativeFilePrios(
+        internalFilesCount, 
+        lt::dont_download
+    );
+
+    int activeFile = -1;
+    int nextFile = -1;
+    
+    // Ищем первый незавершённый файл
+    for (int i = 0; i < fileCount; ++i)
+    {
+        // Пропускаем файлы, помеченные пользователем как "не качать"
+        if (m_filePriorities[i] == DownloadPriority::Ignored)
+            continue;
+
+        // Пропускаем уже скачанные файлы
+        if (m_completedFiles.testBit(i))
+            continue;
+
+        // Первый незавершённый файл = активный (качаем)
+        if (activeFile < 0)
+        {
+            // Сохраняем оригинальный приоритет пользователя (Normal/High/Maximum)
+            nativeFilePrios[LT::toUnderlyingType(nativeIndexes[i])] = LT::toNative(m_filePriorities[i]);
+            activeFile = i;
+        }
+        // Следующий файл = предзагрузка (качаем с низким приоритетом)
+        else if (nextFile < 0)
+        {
+            nativeFilePrios[LT::toUnderlyingType(nativeIndexes[i])] = LT::toNative(DownloadPriority::Low);
+            nextFile = i;
+            break; // Остальные файлы остаются dont_download
+        }
+    }
+
+    // Применяем приоритеты к libtorrent
+    m_nativeHandle.prioritize_files(nativeFilePrios);
+
+    qDebug() << "Sequential: active file =" << activeFile 
+             << (activeFile >= 0 ? QString("(%1)").arg(filePath(activeFile).toString()) : QString("(none)"))
+             << ", next file =" << nextFile
+             << (nextFile >= 0 ? QString("(%1)").arg(filePath(nextFile).toString()) : QString("(none)"));
 }
 
 TrackerEntryStatus TorrentImpl::updateTrackerEntryStatus(const lt::announce_entry &announceEntry, const QHash<lt::tcp::endpoint, QMap<int, int>> &updateInfo)
@@ -2388,6 +2467,13 @@ void TorrentImpl::handleFileCompleted(const lt::file_index_t nativeFileIndex)
             doRenameFile(fileIndex, path);
         }
     }
+
+    // Если sequential file limiting активен - переключаемся на следующий файл
+    if (m_sequentialFileLimiting)
+    {
+        qDebug() << "Sequential: file" << fileIndex << "completed, switching to next file";
+        applySequentialFilePriorities();
+    }
 }
 
 void TorrentImpl::handleFileError(FileErrorInfo fileError)
@@ -2987,7 +3073,31 @@ void TorrentImpl::prioritizeFiles(const QList<DownloadPriority> &priorities)
     m_nativeHandle.prioritize_files(nativePriorities);
 
     m_filePriorities = priorities;
-    // Restore first/last piece first option if necessary
+    
+    // Если включен sequential file limiting - применяем автоматическое ограничение
+    if (m_sequentialFileLimiting)
+    {
+        qDebug() << Q_FUNC_INFO << "Sequential mode active, applying file limiting";
+        applySequentialFilePriorities();
+    }
+    else
+    {
+        // Обычный режим - применяем приоритеты напрямую
+        const int internalFilesCount = m_torrentInfo.nativeInfo()->files().num_files();
+        auto nativePriorities = std::vector<lt::download_priority_t>(
+            internalFilesCount, 
+            LT::toNative(DownloadPriority::Normal)
+        );
+        
+        const auto nativeIndexes = m_torrentInfo.nativeIndexes();
+        for (qsizetype i = 0; i < priorities.size(); ++i)
+            nativePriorities[LT::toUnderlyingType(nativeIndexes[i])] = LT::toNative(priorities[i]);
+
+        qDebug() << Q_FUNC_INFO << "Applying file priorities (normal mode)";
+        m_nativeHandle.prioritize_files(nativePriorities);
+    }
+    
+    // First/last piece priority применяется поверх
     if (m_hasFirstLastPiecePriority)
         applyFirstLastPiecePriority(true);
     manageActualFilePaths();
