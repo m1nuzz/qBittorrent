@@ -309,6 +309,7 @@ namespace BitTorrent
         void moveStorage(const Path &newPath, MoveStorageContext context);
         void manageActualFilePaths();
         void applyFirstLastPiecePriority(bool enabled);
+        void updatePiecePrioritiesFromFiles();
 
         void prepareResumeData(lt::add_torrent_params resumeData);
         void endReceivedMetadataHandling(const Path &savePath, const PathList &fileNames);

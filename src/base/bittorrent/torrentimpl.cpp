@@ -1703,6 +1703,8 @@ void TorrentImpl::forceRecheck()
 
 void TorrentImpl::setSequentialDownload(const bool enable)
 {
+    const bool wasEnabled = isSequentialDownload();
+    
     if (enable)
     {
         m_nativeHandle.set_flags(lt::torrent_flags::sequential_download);
@@ -1712,6 +1714,16 @@ void TorrentImpl::setSequentialDownload(const bool enable)
     {
         m_nativeHandle.unset_flags(lt::torrent_flags::sequential_download);
         m_nativeStatus.flags &= ~lt::torrent_flags::sequential_download;  // prevent return cached value
+    }
+
+    // Recalculate priorities when enabling sequential mode
+    if (enable && !wasEnabled && hasMetadata())
+    {
+        // When enabling sequential - apply existing file priorities
+        if (m_hasFirstLastPiecePriority)
+            applyFirstLastPiecePriority(true);
+        else
+            updatePiecePrioritiesFromFiles();
     }
 
     deferredRequestResumeData();
@@ -1766,6 +1778,40 @@ void TorrentImpl::applyFirstLastPiecePriority(const bool enabled)
             piecePriorities[pieceIndex] = LT::toNative(filePrio);
     }
 
+    m_nativeHandle.prioritize_pieces(piecePriorities);
+}
+
+void TorrentImpl::updatePiecePrioritiesFromFiles()
+{
+    if (!hasMetadata())
+        return;
+
+    // Initialize all pieces with Ignored priority
+    auto piecePriorities = std::vector<lt::download_priority_t>(
+        m_torrentInfo.piecesCount(), 
+        LT::toNative(DownloadPriority::Ignored)
+    );
+
+    // For each file set the priority of its pieces
+    const auto nativeIndexes = m_torrentInfo.nativeIndexes();
+    for (qsizetype fileIndex = 0; fileIndex < m_filePriorities.size(); ++fileIndex)
+    {
+        const DownloadPriority filePrio = m_filePriorities[fileIndex];
+        if (filePrio <= DownloadPriority::Ignored)
+            continue;
+
+        const TorrentInfo::PieceRange pieceRange = m_torrentInfo.filePieces(fileIndex);
+        const lt::download_priority_t piecePrio = LT::toNative(filePrio);
+
+        // Set priority for all pieces of the file
+        for (int pieceIndex = pieceRange.first(); pieceIndex <= pieceRange.last(); ++pieceIndex)
+        {
+            // Use maximum priority if piece belongs to multiple files
+            piecePriorities[pieceIndex] = std::max(piecePriorities[pieceIndex], piecePrio);
+        }
+    }
+
+    // Apply recalculated priorities
     m_nativeHandle.prioritize_pieces(piecePriorities);
 }
 
@@ -2988,8 +3034,20 @@ void TorrentImpl::prioritizeFiles(const QList<DownloadPriority> &priorities)
 
     m_filePriorities = priorities;
     // Restore first/last piece first option if necessary
-    if (m_hasFirstLastPiecePriority)
-        applyFirstLastPiecePriority(true);
+    // Force piece priority recalculation if sequential download or first/last piece priority is enabled
+    if (isSequentialDownload() || m_hasFirstLastPiecePriority)
+    {
+        if (m_hasFirstLastPiecePriority)
+        {
+            // Use existing logic for first/last
+            applyFirstLastPiecePriority(true);
+        }
+        else
+        {
+            // For sequential without first/last - recalculate piece priorities
+            updatePiecePrioritiesFromFiles();
+        }
+    }
     manageActualFilePaths();
 }
 
